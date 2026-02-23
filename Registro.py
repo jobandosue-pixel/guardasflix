@@ -30,12 +30,24 @@ DB_FILE = "metales_flix.xlsx"
 
 # --- Funciones de Datos ---
 def cargar_hoja(sheet):
-    try: return pd.read_excel(DB_FILE, sheet_name=sheet)
-    except: return pd.DataFrame()
+    try: 
+        return pd.read_excel(DB_FILE, sheet_name=sheet)
+    except: 
+        if sheet == 'Registros':
+            return pd.DataFrame(columns=["ID", "Nombre", "Documento", "Placa", "Cliente", "Arribo", "Entrada", "Salida", "Factura", "Guarda", "Observaciones"])
+        elif sheet == 'Guardas':
+            return pd.DataFrame(columns=["Empleado_ID", "Nombre"])
+        elif sheet == 'Transportistas':
+            return pd.DataFrame(columns=["ID_Transportista", "Nombre", "Tipo"])
+        return pd.DataFrame()
 
 def guardar_hoja(df, sheet):
-    with pd.ExcelWriter(DB_FILE, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-        df.to_excel(writer, sheet_name=sheet, index=False)
+    if not os.path.exists(DB_FILE):
+        with pd.ExcelWriter(DB_FILE, engine='xlsxwriter') as writer:
+            df.to_excel(writer, sheet_name=sheet, index=False)
+    else:
+        with pd.ExcelWriter(DB_FILE, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+            df.to_excel(writer, sheet_name=sheet, index=False)
     return True
 
 # --- Control de Estado Crítico ---
@@ -73,13 +85,6 @@ if st.session_state.menu_sel == "Logística":
     df_reg = cargar_hoja('Registros')
     df_transp = cargar_hoja('Transportistas')
     df_guardas = cargar_hoja('Guardas')
-
-    # LÓGICA DE SELECCIÓN (EDICIÓN)
-    if "tabla_p" in st.session_state and st.session_state.tabla_p.selection.rows:
-        idx = st.session_state.tabla_p.selection.rows[0]
-        # Usamos .iloc en el DataFrame ya filtrado (se define abajo)
-        # Para evitar errores, la lógica de edición se maneja después del filtrado
-        pass
 
     with st.expander("➕ FORMULARIO DE REGISTRO / EDICIÓN", expanded=True):
         opciones = ["Digitación Manual"]
@@ -123,33 +128,50 @@ if st.session_state.menu_sel == "Logística":
                 df_final = df_reg
             else:
                 nuevo_id = df_reg['ID'].max() + 1 if not df_reg.empty else 1
-                df_final = pd.concat([df_reg, pd.DataFrame([[nuevo_id, nombre, documento, placa, cliente, dt_ar, dt_en, dt_sa, factura, guarda_sel, obs]], columns=df_reg.columns)], ignore_index=True)
+                nueva_fila = pd.DataFrame([[nuevo_id, nombre, documento, placa, cliente, dt_ar, dt_en, dt_sa, factura, guarda_sel, obs]], columns=df_reg.columns)
+                df_final = pd.concat([df_reg, nueva_fila], ignore_index=True)
             guardar_hoja(df_final, 'Registros'); st.success("✅ Guardado"); limpiar_todo()
 
-        if b2.button("🗑️ ELIMINAR") and "tabla_p" in st.session_state and st.session_state.tabla_p.selection.rows:
-            # Eliminar usando el ID real para no borrar la fila equivocada al estar filtrado
-            idx_sel = st.session_state.tabla_p.selection.rows[0]
-            # Acceder al DataFrame filtrado que se muestra abajo
-            pass 
+        if b2.button("🗑️ ELIMINAR REGISTRO") and "tabla_p" in st.session_state and st.session_state.tabla_p.selection.rows:
+            idx_f = st.session_state.tabla_p.selection.rows[0]
+            # Usar los datos actuales de la tabla mostrada (ya ordenada y filtrada)
+            search_p = st.session_state.get("search_p", "")
+            df_view = df_reg.copy()
+            if not df_view.empty:
+                df_view['Arribo_DT'] = pd.to_datetime(df_view['Arribo'], errors='coerce')
+                df_view = df_view.sort_values(by='Arribo_DT', ascending=False).drop(columns=['Arribo_DT'])
+            
+            if search_p:
+                mask = df_view.astype(str).apply(lambda x: x.str.contains(search_p, case=False)).any(axis=1)
+                df_view = df_view[mask]
+            
+            id_borrar = df_view.iloc[idx_f]["ID"]
+            df_final = df_reg[df_reg["ID"] != id_borrar]
+            guardar_hoja(df_final, 'Registros'); st.error("Registro eliminado"); limpiar_todo()
 
-    # --- FILTRADO DINÁMICO ---
     st.subheader("📋 TABLA DE MOVIMIENTOS")
     search_p = st.text_input("🔍 FILTRAR TABLA (Nombre, Placa, Documento, Cliente...):", key="search_p")
-    df_filtered = df_reg.copy()
-    if search_p:
-        mask = df_filtered.astype(str).apply(lambda x: x.str.contains(search_p, case=False)).any(axis=1)
-        df_filtered = df_filtered[mask]
     
-    # Manejo de selección sobre tabla filtrada
+    # --- Lógica de Ordenamiento por Fecha de Arribo ---
+    df_display = df_reg.copy()
+    if not df_display.empty:
+        # Convertimos a datetime para ordenar correctamente, luego descartamos la columna auxiliar
+        df_display['Arribo_DT'] = pd.to_datetime(df_display['Arribo'], errors='coerce')
+        df_display = df_display.sort_values(by='Arribo_DT', ascending=False).drop(columns=['Arribo_DT'])
+
+    if search_p:
+        mask = df_display.astype(str).apply(lambda x: x.str.contains(search_p, case=False)).any(axis=1)
+        df_display = df_display[mask]
+    
     if "tabla_p" in st.session_state and st.session_state.tabla_p.selection.rows:
         idx_f = st.session_state.tabla_p.selection.rows[0]
-        if idx_f < len(df_filtered):
-            fila = df_filtered.iloc[idx_f]
+        if idx_f < len(df_display):
+            fila = df_display.iloc[idx_f]
             if st.session_state.temp_datos["Documento"] != str(fila["Documento"]):
                 st.session_state.temp_datos = {"Nombre": str(fila["Nombre"]), "Documento": str(fila["Documento"]), "Placa": str(fila["Placa"]), "Cliente": str(fila["Cliente"]), "Factura": str(fila["Factura"]), "Obs": str(fila["Observaciones"])}
                 st.session_state.selector_id += 1; st.rerun()
 
-    st.dataframe(df_filtered, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_p")
+    st.dataframe(df_display, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_p")
 
 # ================= PÁGINA 2: GUARDAS =================
 elif st.session_state.menu_sel == "Guardas":
@@ -159,27 +181,38 @@ elif st.session_state.menu_sel == "Guardas":
     search_g = st.text_input("🔍 FILTRAR GUARDAS:", key="search_g")
     df_g_filt = df_g.copy()
     if search_g:
-        df_g_filt = df_g_filt[df_g_filt.astype(str).apply(lambda x: x.str.contains(search_g, case=False)).any(axis=1)]
+        mask = df_g_filt.astype(str).apply(lambda x: x.str.contains(search_g, case=False)).any(axis=1)
+        df_g_filt = df_g_filt[mask]
 
     if "tabla_g" in st.session_state and st.session_state.tabla_g.selection.rows:
-        idx = st.session_state.tabla_g.selection.rows[0]
-        if idx < len(df_g_filt):
-            st.session_state.m_id, st.session_state.m_nom = str(df_g_filt.iloc[idx]["Empleado_ID"]), str(df_g_filt.iloc[idx]["Nombre"])
+        idx_f = st.session_state.tabla_g.selection.rows[0]
+        if idx_f < len(df_g_filt):
+            fila = df_g_filt.iloc[idx_f]
+            if st.session_state.m_id != str(fila["Empleado_ID"]):
+                st.session_state.m_id, st.session_state.m_nom = str(fila["Empleado_ID"]), str(fila["Nombre"])
+                st.session_state.selector_id += 1; st.rerun()
 
-    with st.expander("📝 GESTIÓN", expanded=True):
-        id_g = st.text_input("ID:", value=st.session_state.m_id, key=f"gi_{st.session_state.selector_id}")
-        nom_g = st.text_input("Nombre:", value=st.session_state.m_nom, key=f"gn_{st.session_state.selector_id}")
-        c1, c2, c3 = st.columns(3)
-        if c1.button("💾 GUARDAR"):
-            if not df_g.empty and str(id_g) in df_g['Empleado_ID'].astype(str).values:
-                df_g.loc[df_g['Empleado_ID'].astype(str) == str(id_g), "Nombre"] = nom_g
-            else:
-                df_g = pd.concat([df_g, pd.DataFrame([[id_g, nom_g]], columns=df_g.columns)], ignore_index=True)
-            guardar_hoja(df_g, 'Guardas'); limpiar_todo()
+    with st.expander("📝 GESTIÓN DE GUARDAS", expanded=True):
+        col_id, col_nom = st.columns(2)
+        id_g = col_id.text_input("ID / CÉDULA:", value=st.session_state.m_id, key=f"gi_{st.session_state.selector_id}")
+        nom_g = col_nom.text_input("NOMBRE COMPLETO:", value=st.session_state.m_nom, key=f"gn_{st.session_state.selector_id}")
+        
+        c1, c2, c3 = st.columns([2, 1, 1])
+        if c1.button("💾 GUARDAR / ACTUALIZAR", type="primary"):
+            if id_g and nom_g:
+                if not df_g.empty and str(id_g) in df_g['Empleado_ID'].astype(str).values:
+                    df_g.loc[df_g['Empleado_ID'].astype(str) == str(id_g), "Nombre"] = nom_g
+                    df_final = df_g
+                else:
+                    df_final = pd.concat([df_g, pd.DataFrame([[id_g, nom_g]], columns=df_g.columns)], ignore_index=True)
+                guardar_hoja(df_final, 'Guardas'); st.success("Guardado"); limpiar_todo()
+
         if c2.button("🗑️ BORRAR") and "tabla_g" in st.session_state and st.session_state.tabla_g.selection.rows:
             id_to_del = df_g_filt.iloc[st.session_state.tabla_g.selection.rows[0]]["Empleado_ID"]
             guardar_hoja(df_g[df_g["Empleado_ID"] != id_to_del], 'Guardas'); limpiar_todo()
+        
         if c3.button("🧹 NUEVO"): limpiar_todo()
+
     st.dataframe(df_g_filt, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_g")
 
 # ================= PÁGINA 3: TRANSPORTISTAS =================
@@ -190,27 +223,38 @@ elif st.session_state.menu_sel == "Transportistas":
     search_t = st.text_input("🔍 FILTRAR TRANSPORTISTAS:", key="search_t")
     df_t_filt = df_t.copy()
     if search_t:
-        df_t_filt = df_t_filt[df_t_filt.astype(str).apply(lambda x: x.str.contains(search_t, case=False)).any(axis=1)]
+        mask = df_t_filt.astype(str).apply(lambda x: x.str.contains(search_t, case=False)).any(axis=1)
+        df_t_filt = df_t_filt[mask]
 
     if "tabla_t" in st.session_state and st.session_state.tabla_t.selection.rows:
-        idx = st.session_state.tabla_t.selection.rows[0]
-        if idx < len(df_t_filt):
-            st.session_state.m_id, st.session_state.m_nom = str(df_t_filt.iloc[idx]["ID_Transportista"]), str(df_t_filt.iloc[idx]["Nombre"])
+        idx_f = st.session_state.tabla_t.selection.rows[0]
+        if idx_f < len(df_t_filt):
+            fila = df_t_filt.iloc[idx_f]
+            if st.session_state.m_id != str(fila["ID_Transportista"]):
+                st.session_state.m_id, st.session_state.m_nom = str(fila["ID_Transportista"]), str(fila["Nombre"])
+                st.session_state.selector_id += 1; st.rerun()
 
-    with st.expander("📝 GESTIÓN", expanded=True):
-        id_t = st.text_input("ID:", value=st.session_state.m_id, key=f"ti_{st.session_state.selector_id}")
-        nom_t = st.text_input("Nombre:", value=st.session_state.m_nom, key=f"tn_{st.session_state.selector_id}")
-        c1, c2, c3 = st.columns(3)
-        if c1.button("💾 GUARDAR"):
-            if not df_t.empty and str(id_t) in df_t['ID_Transportista'].astype(str).values:
-                df_t.loc[df_t['ID_Transportista'].astype(str) == str(id_t), "Nombre"] = nom_t
-            else:
-                df_t = pd.concat([df_t, pd.DataFrame([[id_t, nom_t, "FISICA"]], columns=df_t.columns)], ignore_index=True)
-            guardar_hoja(df_t, 'Transportistas'); limpiar_todo()
+    with st.expander("📝 GESTIÓN DE TRANSPORTISTAS", expanded=True):
+        col_id_t, col_nom_t = st.columns(2)
+        id_t = col_id_t.text_input("ID / NIT:", value=st.session_state.m_id, key=f"ti_{st.session_state.selector_id}")
+        nom_t = col_nom_t.text_input("NOMBRE:", value=st.session_state.m_nom, key=f"tn_{st.session_state.selector_id}")
+        
+        c1, c2, c3 = st.columns([2, 1, 1])
+        if c1.button("💾 GUARDAR / ACTUALIZAR", type="primary"):
+            if id_t and nom_t:
+                if not df_t.empty and str(id_t) in df_t['ID_Transportista'].astype(str).values:
+                    df_t.loc[df_t['ID_Transportista'].astype(str) == str(id_t), "Nombre"] = nom_t
+                    df_final = df_t
+                else:
+                    df_final = pd.concat([df_t, pd.DataFrame([[id_t, nom_t, "FISICA"]], columns=df_t.columns)], ignore_index=True)
+                guardar_hoja(df_final, 'Transportistas'); st.success("Guardado"); limpiar_todo()
+
         if c2.button("🗑️ BORRAR") and "tabla_t" in st.session_state and st.session_state.tabla_t.selection.rows:
             id_to_del = df_t_filt.iloc[st.session_state.tabla_t.selection.rows[0]]["ID_Transportista"]
             guardar_hoja(df_t[df_t["ID_Transportista"] != id_to_del], 'Transportistas'); limpiar_todo()
+            
         if c3.button("🧹 NUEVO"): limpiar_todo()
+
     st.dataframe(df_t_filt, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_t")
 
 # ================= PÁGINA 4: REPORTES =================
@@ -218,6 +262,10 @@ elif st.session_state.menu_sel == "Reportes":
     st.header("📊 Exportación")
     df_rep = cargar_hoja('Registros')
     if not df_rep.empty:
+        # También ordenamos los reportes para que el Excel salga ordenado
+        df_rep['Arribo_DT'] = pd.to_datetime(df_rep['Arribo'], errors='coerce')
+        df_rep = df_rep.sort_values(by='Arribo_DT', ascending=False).drop(columns=['Arribo_DT'])
+        
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_rep.to_excel(writer, sheet_name='Registros', index=False)
