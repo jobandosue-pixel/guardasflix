@@ -165,21 +165,26 @@ if st.session_state.menu_sel == "Logística":
 
         if b2.button("🗑️ BORRAR"):
             if "tabla_p" in st.session_state and st.session_state.tabla_p.selection.rows:
+                # Usamos el DF original para borrar por ID real
                 id_b = df_reg.iloc[st.session_state.tabla_p.selection.rows[0]]["ID"]
                 guardar_hoja(df_reg[df_reg["ID"] != id_b], 'Registros'); limpiar_todo()
 
         if b3.button("🧹 LIMPIAR"): limpiar_todo()
 
     st.subheader("📋 MOVIMIENTOS REGISTRADOS")
-    event_p = st.dataframe(df_reg, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_p")
+    
+    # --- BUSCADOR LOGÍSTICA ---
+    busqueda_p = st.text_input("🔍 Filtrar por Nombre, Placa, Documento o Cliente:", key="bus_p")
+    df_filtrado_p = df_reg[df_reg.apply(lambda row: busqueda_p.lower() in row.astype(str).str.lower().str.cat(sep=' '), axis=1)] if busqueda_p else df_reg
+    
+    event_p = st.dataframe(df_filtrado_p, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_p")
 
-    # Lógica anti-bucle: solo refresca si el índice cambió
     if event_p.selection.rows:
         current_idx = event_p.selection.rows[0]
-        if current_idx != st.session_state.last_idx:
-            fila = df_reg.iloc[current_idx]
+        # Obtenemos la fila del dataframe filtrado
+        fila = df_filtrado_p.iloc[current_idx]
+        if str(fila["Documento"]) != str(st.session_state.temp_datos["Documento"]):
             st.session_state.temp_datos = {"Nombre": str(fila["Nombre"]), "Documento": str(fila["Documento"]), "Placa": str(fila["Placa"]), "Cliente": str(fila["Cliente"]), "Factura": str(fila["Factura"]), "Obs": str(fila["Observaciones"])}
-            st.session_state.last_idx = current_idx
             st.session_state.selector_id += 1
             st.rerun()
 
@@ -199,13 +204,15 @@ elif st.session_state.menu_sel == "Guardas":
             guardar_hoja(df_g[df_g['Empleado_ID'].astype(str) != str(id_g_in)], 'Guardas'); limpiar_todo()
         if c3.button("🧹 LIMPIAR"): limpiar_todo()
     
-    event_g = st.dataframe(df_g, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_g")
+    # --- BUSCADOR GUARDAS ---
+    busqueda_g = st.text_input("🔍 Buscar Guarda por Nombre o ID:", key="bus_g")
+    df_filtrado_g = df_g[df_g.apply(lambda row: busqueda_g.lower() in row.astype(str).str.lower().str.cat(sep=' '), axis=1)] if busqueda_g else df_g
+    
+    event_g = st.dataframe(df_filtrado_g, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_g")
     if event_g.selection.rows:
-        cur_g = event_g.selection.rows[0]
-        if cur_g != st.session_state.last_idx:
-            fila_g = df_g.iloc[cur_g]
+        fila_g = df_filtrado_g.iloc[event_g.selection.rows[0]]
+        if str(fila_g["Empleado_ID"]) != st.session_state.g_id:
             st.session_state.g_id, st.session_state.g_nom = str(fila_g["Empleado_ID"]), str(fila_g["Nombre"])
-            st.session_state.last_idx = cur_g
             st.session_state.selector_id += 1
             st.rerun()
 
@@ -225,13 +232,15 @@ elif st.session_state.menu_sel == "Transportistas":
             guardar_hoja(df_t[df_t['ID_Transportista'].astype(str) != str(id_t_in)], 'Transportistas'); limpiar_todo()
         if c3.button("🧹 LIMPIAR"): limpiar_todo()
 
-    event_t = st.dataframe(df_t, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_t")
+    # --- BUSCADOR TRANSPORTISTAS ---
+    busqueda_t = st.text_input("🔍 Buscar Transportista por Nombre o NIT:", key="bus_t")
+    df_filtrado_t = df_t[df_t.apply(lambda row: busqueda_t.lower() in row.astype(str).str.lower().str.cat(sep=' '), axis=1)] if busqueda_t else df_t
+
+    event_t = st.dataframe(df_filtrado_t, use_container_width=True, on_select="rerun", selection_mode="single-row", key="tabla_t")
     if event_t.selection.rows:
-        cur_t = event_t.selection.rows[0]
-        if cur_t != st.session_state.last_idx:
-            fila_t = df_t.iloc[cur_t]
+        fila_t = df_filtrado_t.iloc[event_t.selection.rows[0]]
+        if str(fila_t["ID_Transportista"]) != st.session_state.t_id:
             st.session_state.t_id, st.session_state.t_nom = str(fila_t["ID_Transportista"]), str(fila_t["Nombre"])
-            st.session_state.last_idx = cur_t
             st.session_state.selector_id += 1
             st.rerun()
 
